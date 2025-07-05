@@ -2,6 +2,8 @@ package com.mstrouthos.resource;
 
 import com.mstrouthos.dto.SmsMessage;
 import com.mstrouthos.dto.SmsCallback;
+import com.mstrouthos.validation.SmsValidator;
+import com.mstrouthos.validation.ValidationResult;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.jboss.logging.Logger;
@@ -29,11 +31,27 @@ public class ApiResource {
     @Inject
     EntityManager entityManager;
 
+    @Inject
+    SmsValidator smsValidator;
+
+    /**
+     * Sends an SMS message by validating the request, persisting it to the database,
+     * and queuing it for delivery via RabbitMQ
+     */
     @POST
     @Path("/send")
     @Transactional
     public Response sendSms(SmsMessage smsMessage) {
-        LOG.infof("Received SMSA request for phone: %s", smsMessage.phoneNumber);  
+        LOG.infof("Received SMS request for phone: %s", smsMessage.phoneNumber);  
+
+        ValidationResult validation = smsValidator.validateSmsRequest(smsMessage);
+        if (!validation.isValid()) {
+            LOG.warnf("SMS validation failed: %s", validation.getErrorMessage());
+            return Response.status(400)
+                .entity(String.format("{\"error\":\"%s\",\"details\":%s}", 
+                       validation.getErrorMessage(), validation.getErrorDetailsJson()))
+                .build();
+        }
 
         try {
             smsMessage.createdAt = java.time.LocalDateTime.now();
@@ -56,6 +74,9 @@ public class ApiResource {
         }
     }
 
+    /**
+     * Retrieves all SMS messages from the database for the current user.
+     */
     @GET
     @Path("/messages")
     public Response listSms() {
@@ -76,6 +97,10 @@ public class ApiResource {
         }
     }
 
+    /**
+     * Handles SMS delivery status callbacks from the SMS provider,
+     * updating the message status in the database.
+     */
     @POST
     @Path("/callback")
     @Transactional
